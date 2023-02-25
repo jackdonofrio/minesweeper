@@ -187,7 +187,7 @@ static void grid_to_curse(int** grid, bool** revealed, int size)
           int num = grid[i][j];
           switch (num) {
             case 0:
-              put(i, 2 * j, '0', 0);
+              put(i, 2 * j, ' ', 0);
               break;
             case 1:
               put(i, 2 * j, '1', 1);
