@@ -1,30 +1,14 @@
 /*
  * Minesweeper by Jack Donofrio
- * usage: ./minesweeper 0|1|2
+ * usage: ./minesweeper 0|1|2|3
  */
-
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdbool.h>
 #include <ncurses.h>
-
-static void setup_ncurses();
-static void parseArgs(const int argc, char* argv[], int* size);
-static void dropMines(int** grid, int size);
-// static void showMapDebug(int** grid, bool** revealed, int size);
-static bool reveal(int** grid, int size, int row, int column, bool** revealed, int* numNonMines);
-static void grid_to_curse(int** grid, bool** revealed, int size);
-static void init_grid_curse(int size);
-static void put(int row, int col, char c, int color);
-static inline int min(int a, int b);
-static inline int max(int a, int b);
-static inline int getNumMines(int size);
-
-static const int EASY_SIZE = 8;
-static const int MID_SIZE = 15;
-static const int HARD_SIZE = 22;
+#include "minesweeper.h"
 
 int main(const int argc, char* argv[])
 {
@@ -47,13 +31,13 @@ int main(const int argc, char* argv[])
 
   init_grid_curse(size);
   attron(COLOR_PAIR(2));
-  mvprintw(size + 1, 0, "Minesweeper");
-  mvprintw(size + 2, 0, "wasd to move, r: reveal tile, f: toggle flag, q: quit");
+  mvprintw(size + 2, 0, "Minesweeper");
+  mvprintw(size + 3, 0, "wasd to move, r: reveal tile, f: toggle flag, q: quit");
   attroff(COLOR_PAIR(2));
 
-  int playerRow = 0;
+  int playerRow = 0; // in terms of grid
   int playerCol = 0;
-  move(playerRow, playerCol);
+  move(gridToCurse_row(playerRow), gridToCurse_col(playerCol));
   int numNonMines = size * size - getNumMines(size);
 
   int revealResult = 0;  
@@ -64,10 +48,10 @@ int main(const int argc, char* argv[])
       case 'q':
         break;
       case 'a':
-        playerCol = max(playerCol - 2, 0);
+        playerCol = max(playerCol - 1, 0);
         break;
       case 'd':
-        playerCol = min(playerCol + 2, 2 * (size - 1));
+        playerCol = min(playerCol + 1, size - 1);
         break;
       case 'w':
         playerRow = max(playerRow - 1, 0);
@@ -76,7 +60,7 @@ int main(const int argc, char* argv[])
         playerRow = min(playerRow + 1, size - 1);
         break;
       case 'r':
-        revealResult = reveal(grid, size, playerRow, playerCol / 2, revealed, &numNonMines);
+        revealResult = reveal(grid, size, playerRow, playerCol, revealed, &numNonMines);
         grid_to_curse(grid, revealed, size);
         if (revealResult) { // if we stepped on a bomb
           attron(COLOR_PAIR(3));
@@ -96,16 +80,21 @@ int main(const int argc, char* argv[])
         }
         break;
       case 'f':
-        if (revealed[playerRow][playerCol / 2]) break;
-        if ((mvinch(playerRow, playerCol) & A_CHARTEXT) == '?') {
-          put(playerRow, playerCol, '#', '#');
+        if (revealed[playerRow][playerCol]) break;
+        int curse_row = gridToCurse_row(playerRow);
+        int curse_col = gridToCurse_col(playerCol);
+        if ((mvinch(curse_row, curse_col) & A_CHARTEXT) == '?') {
+          put(curse_row, curse_col, '#', '#');
         } else {
-          put(playerRow, playerCol, '?', '?');
+          put(curse_row, curse_col, '?', '?');
         }
         refresh();
         break;
+      // case '0':
+      //   reset(grid, revealed, size);
+      //   break;
     }
-    move(playerRow, playerCol);
+    move(gridToCurse_row(playerRow), gridToCurse_col(playerCol));
   }
 
   // showMapDebug(grid, revealed, size);
@@ -132,12 +121,16 @@ static void parseArgs(const int argc, char* argv[], int* size)
       case '2':
         *size = HARD_SIZE;
         break;
+      case '3':
+        *size = EXTREME_SIZE;
+        break;
       default:
-        fprintf(stderr, "usage: minesweeper 0|1|2\n");
+        fprintf(stderr, "usage: minesweeper 0|1|2|3\n");
         exit(1);
+        break;
     }
   } else {
-    fprintf(stderr, "usage: minesweeper 0|1|2\n");
+    fprintf(stderr, "usage: minesweeper 0|1|2|3\n");
     exit(1);
   }
 }
@@ -162,47 +155,62 @@ static void setup_ncurses()
 
 static void init_grid_curse(int size) {
   attron(COLOR_PAIR('#'));
-  int i, j;
-  for (i = 0; i < size; i++) {
-    for (j = 0; j < size; j++) {
-      mvaddch(i, 2 * j, '#');
+  int row, column;
+  
+  // top border +--- ... ---+
+  mvaddch(0, 0, '+');
+  for (column = 1; column < (size + 1) * 2; column++) {
+    mvaddch(0, column, '-');
+  }
+  mvaddch(0, column, '+');
+
+  // interior - with each row enclosed by borders
+  for (row = 1; row < size + 1; row++) {
+    mvaddch(row, 0, '|');
+    for (column = 1; column < size + 1; column++) {
+      mvaddch(row, 2 * column, '#');
     }
-    mvaddch(i, 2 * j, '|');
+    mvaddch(row, 2 * column, '|');
   }
-  for (j = 0; j < size * 2; j++) {
-    mvaddch(i, j, '-');
+
+  // bottom border
+  mvaddch(row, 0, '+');
+  for (column = 1; column < (size + 1) * 2; column++) {
+    mvaddch(row, column, '-');
   }
-  mvaddch(i, j, '+');
+  mvaddch(row, column, '+');
   attroff(COLOR_PAIR('#'));
 }
 
 static void grid_to_curse(int** grid, bool** revealed, int size)
 {
-  for (int i = 0; i < size; i++) {
-    for (int j = 0; j < size; j++) {
-      if (revealed[i][j]) {
-        if (grid[i][j] == -1) {
-          put(i, 2 * j, '!', '!');
+  for (int row = 0; row < size; row++) {
+    for (int column = 0; column < size; column++) {
+      int curse_row = gridToCurse_row(row);
+      int curse_col = gridToCurse_col(column);
+      if (revealed[row][column]) {
+        if (grid[row][column] == -1) {
+          put(curse_row, curse_col, '!', '!');
         } else {
-          int num = grid[i][j];
+          int num = grid[row][column];
           switch (num) {
             case 0:
-              put(i, 2 * j, ' ', 0);
+              put(curse_row, curse_col, ' ', 0);
               break;
             case 1:
-              put(i, 2 * j, '1', 1);
+              put(curse_row, curse_col, '1', 1);
               break;
             case 2:
-              put(i, 2 * j, '2', 2);
+              put(curse_row, curse_col, '2', 2);
               break;
             case 3:
-              put(i, 2 * j, '3', 3);
+              put(curse_row, curse_col, '3', 3);
               break;
             case 4:
-              put(i, 2 * j, '4', 4);
+              put(curse_row, curse_col, '4', 4);
               break;
             default:
-              mvaddch(i, 2 * j, '0' + num);
+              mvaddch(curse_row, curse_col, '0' + num);
               break;
           }
         }
@@ -266,6 +274,23 @@ reveal(int** grid, int size, int row, int col, bool** revealed, int* numNonMines
   return false;
 }
 
+static void reset(int** grid, bool** revealed, int size)
+{
+  if (grid == NULL || size <= 0) {
+    return;
+  }
+  for (int i = 0; i < size; i++) {
+    for (int j = 0; j < size; j++) {
+      grid[i][j] = 0;
+      revealed[i][j] = false;
+    }
+  }
+  dropMines(grid, size);
+  grid_to_curse(grid, revealed, size);
+  refresh();
+}
+
+
 static void put(int row, int col, char c, int color)
 {
   attron(COLOR_PAIR(color));
@@ -285,22 +310,26 @@ static inline int max(int a, int b)
 
 static inline int getNumMines(int size)
 {
-  if (size == EASY_SIZE) return 10;
-  else if (size ==  MID_SIZE) return 40;
-  else if (size == HARD_SIZE) return 99;
-  return 0;
+  switch (size) {
+    case EASY_SIZE:
+      return 10;
+    case MID_SIZE:
+      return 40;
+    case HARD_SIZE:
+      return 99;
+    case EXTREME_SIZE:
+      return 320;
+    default:
+      return 0;
+  }
 }
 
-// static void showMapDebug(int** grid, bool** revealed, int size)
-// {
-//   for (int r = 0; r < size; r++) {
-//     for (int c = 0; c < size; c++) {
-//       if (revealed[r][c]) {
-//         printf("#");
-//       } else {
-//         printf("%d", grid[r][c]);
-//       }
-//     }
-//     putchar('\n');
-//    }
-// }
+static inline int gridToCurse_col(int column)
+{
+  return column * 2 + 2;
+}
+
+static inline int gridToCurse_row(int row)
+{
+  return row + 1;
+}
